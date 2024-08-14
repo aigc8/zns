@@ -16,6 +16,10 @@ import (
 	"golang.org/x/crypto/acme/autocert"
 )
 
+const (
+	DebugPort = 80
+)
+
 var tlsCert string
 var tlsKey string
 var tlsHosts string
@@ -25,6 +29,7 @@ var dbPath string
 var price int
 var free bool
 var root string
+var debugPort int
 
 func listen() (lnH12 net.Listener, lnH3 net.PacketConn, err error) {
 	if os.Getenv("LISTEN_PID") == strconv.Itoa(os.Getpid()) {
@@ -72,30 +77,34 @@ If not free, you should set the following environment variables:
 	- ALIPAY_PRIVATE_KEY
 	- ALIPAY_PUBLIC_KEY
 `)
+	flag.IntVar(&debugPort, "debug-port", 0, "Debug port. If set to 80, disable auto-certificate")
 
 	flag.Parse()
 
 	var tlsCfg *tls.Config
-	if tlsHosts != "" {
-		acm := autocert.Manager{
-			Prompt:     autocert.AcceptTOS,
-			Cache:      autocert.DirCache(os.Getenv("HOME") + "/.autocert"),
-			HostPolicy: autocert.HostWhitelist(strings.Split(tlsHosts, ",")...),
-		}
+	if debugPort != DebugPort {
+		if tlsHosts != "" {
+			acm := autocert.Manager{
+				Prompt:     autocert.AcceptTOS,
+				Cache:      autocert.DirCache(os.Getenv("HOME") + "/.autocert"),
+				HostPolicy: autocert.HostWhitelist(strings.Split(tlsHosts, ",")...),
+			}
 
-		tlsCfg = acm.TLSConfig()
-	} else {
-		tlsCfg = &tls.Config{}
-		certs, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
-		if err != nil {
-			panic(err)
+			tlsCfg = acm.TLSConfig()
+		} else if tlsCert != "" && tlsKey != "" {
+			tlsCfg = &tls.Config{}
+			certs, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+			if err != nil {
+				log.Printf("Failed to load TLS certificate and key: %v", err)
+				log.Println("Falling back to HTTP")
+				debugPort = DebugPort
+			} else {
+				tlsCfg.Certificates = []tls.Certificate{certs}
+			}
+		} else {
+			log.Println("No TLS certificate provided. Falling back to HTTP")
+			debugPort = DebugPort
 		}
-		tlsCfg.Certificates = []tls.Certificate{certs}
-	}
-
-	lnH12, lnH3, err := listen()
-	if err != nil {
-		panic(err)
 	}
 
 	var pay zns.Pay
@@ -120,17 +129,30 @@ If not free, you should set the following environment variables:
 	mux.Handle("/ticket/{token}", th)
 	mux.Handle("/", http.FileServer(http.Dir(root)))
 
-	if lnH3 != nil {
-		p := lnH3.LocalAddr().(*net.UDPAddr).Port
-		h.AltSvc = fmt.Sprintf(`h3=":%d"`, p)
-		th.AltSvc = h.AltSvc
+	if debugPort == DebugPort {
+		log.Printf("Running in HTTP mode on port %d\n", DebugPort)
+		if err := http.ListenAndServe(fmt.Sprintf(":%d", DebugPort), mux); err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		lnH12, lnH3, err := listen()
+		if err != nil {
+			log.Fatal(err)
+		}
 
-		h3 := http3.Server{Handler: mux, TLSConfig: tlsCfg}
-		go h3.Serve(lnH3)
-	}
+		if lnH3 != nil {
+			p := lnH3.LocalAddr().(*net.UDPAddr).Port
+			h.AltSvc = fmt.Sprintf(`h3=":%d"`, p)
+			th.AltSvc = h.AltSvc
 
-	lnTLS := tls.NewListener(lnH12, tlsCfg)
-	if err = http.Serve(lnTLS, mux); err != nil {
-		log.Fatal(err)
+			h3 := http3.Server{Handler: mux, TLSConfig: tlsCfg}
+			go h3.Serve(lnH3)
+		}
+
+		log.Printf("Running in HTTPS mode on port %s\n", h12)
+		lnTLS := tls.NewListener(lnH12, tlsCfg)
+		if err = http.Serve(lnTLS, mux); err != nil {
+			log.Fatal(err)
+		}
 	}
 }

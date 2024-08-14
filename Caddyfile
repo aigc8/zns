@@ -1,0 +1,19 @@
+:443 {
+    tls internal
+
+    route /dns-query {
+        reverse_proxy http://zns:80
+    }
+
+    handle_path /dns-query {
+        header_up Host {upstream_hostport}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+}
