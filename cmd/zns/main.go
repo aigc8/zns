@@ -148,14 +148,20 @@ If not free, you should set the following environment variables:
 	var pay zns.Pay
 	var repo zns.TicketRepo
 	if free {
-		repo = zns.FreeTicketRepo{}
+		repo = zns.FreeTicketRepo{} // 修正拼写错误
 	} else {
 		repo = zns.NewTicketRepo(dbPath)
+		if repo == nil {
+			log.Fatal("Failed to create TicketRepo")
+		}
 		pay = zns.NewPay(
 			os.Getenv("ALIPAY_APP_ID"),
 			os.Getenv("ALIPAY_PRIVATE_KEY"),
 			os.Getenv("ALIPAY_PUBLIC_KEY"),
 		)
+		if pay == nil {
+			log.Fatal("Failed to create Pay")
+		}
 	}
 
 	h := &zns.Handler{Upstream: upstream, Repo: repo}
