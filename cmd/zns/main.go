@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -119,9 +120,20 @@ If not free, you should set the following environment variables:
 
 		solver := &customDNSChallengeSolver{provider: provider}
 
+		// 确定缓存目录
+		cacheDir := ""
+		if runtime.GOOS == "windows" {
+			cacheDir = filepath.Join(os.Getenv("LOCALAPPDATA"), "zns-autocert")
+		} else {
+			cacheDir = filepath.Join(os.Getenv("HOME"), ".zns-autocert")
+		}
+		if err := os.MkdirAll(cacheDir, 0700); err != nil {
+			log.Fatalf("Failed to create autocert cache directory: %v", err)
+		}
+
 		acm := &autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
-			Cache:      autocert.DirCache(os.Getenv("HOME") + "/.autocert"),
+			Cache:      autocert.DirCache(cacheDir),
 			HostPolicy: autocert.HostWhitelist(strings.Split(tlsHosts, ",")...),
 		}
 
