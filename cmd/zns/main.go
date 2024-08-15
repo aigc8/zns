@@ -188,9 +188,18 @@ If not free, you should set the following environment variables:
 	mux.Handle("/", http.FileServer(http.Dir(root)))
 
 	if lnH3 != nil {
-		p := lnH3.LocalAddr().(*net.UDPAddr).Port
-		h.AltSvc = fmt.Sprintf(`h3=":%d"`, p)
-		th.AltSvc = h.AltSvc
+		localAddr := lnH3.LocalAddr()
+		if localAddr == nil {
+			log.Println("Warning: Unable to get local address for HTTP/3 listener")
+		} else {
+			udpAddr, ok := localAddr.(*net.UDPAddr)
+			if !ok {
+				log.Printf("Warning: Unexpected address type for HTTP/3 listener: %T", localAddr)
+			} else {
+				h.AltSvc = fmt.Sprintf(`h3=":%d"`, udpAddr.Port)
+				th.AltSvc = h.AltSvc
+			}
+		}
 
 		h3 := http3.Server{Handler: mux, TLSConfig: tlsCfg}
 		go func() {
@@ -198,6 +207,8 @@ If not free, you should set the following environment variables:
 				log.Printf("Error serving HTTP/3: %v", err)
 			}
 		}()
+	} else {
+		log.Println("HTTP/3 listener not available")
 	}
 
 	if lnH12 != nil {
