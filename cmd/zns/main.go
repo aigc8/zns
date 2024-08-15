@@ -53,7 +53,7 @@ var (
 
 type Autocert struct {
 	domains            []string
-	ownerEmail         []string
+	ownerEmail         string
 	cloudflareAPIToken string
 	privateKey         *ecdsa.PrivateKey
 	certs              []acme.Certificate
@@ -64,7 +64,7 @@ type Autocert struct {
 func NewAutocert(domains []string, ownerEmail string, cloudflareAPIToken string, prod bool) *Autocert {
 	return &Autocert{
 		domains:            domains,
-		ownerEmail:         []string{ownerEmail},
+		ownerEmail:         ownerEmail,
 		cloudflareAPIToken: cloudflareAPIToken,
 		inProcess:          atomic.NewBool(false),
 		prod:               prod,
@@ -109,7 +109,7 @@ func (a *Autocert) RequestCertificate(ctx context.Context) (err error) {
 	}
 
 	account := acme.Account{
-		Contact:              a.ownerEmail,
+		Contact:              []string{"mailto:" + a.ownerEmail},
 		TermsOfServiceAgreed: true,
 		PrivateKey:           accountPrivateKey,
 	}
