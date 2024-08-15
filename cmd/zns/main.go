@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -89,6 +90,16 @@ If not free, you should set the following environment variables:
 
 	flag.Parse()
 
+	// 验证root路径
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		log.Fatalf("Invalid root path: %v", err)
+	}
+	if _, err := os.Stat(absRoot); os.IsNotExist(err) {
+		log.Fatalf("Root directory does not exist: %s", absRoot)
+	}
+	root = absRoot
+
 	var tlsCfg *tls.Config
 	if tlsHosts != "" {
 		cfAPIToken := os.Getenv("CF_API_TOKEN")
@@ -137,17 +148,17 @@ If not free, you should set the following environment variables:
 				return cert, nil
 			},
 		}
-	} else {
-		tlsCfg = &tls.Config{}
-		if tlsCert != "" && tlsKey != "" {
-			certs, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
-			if err != nil {
-				log.Fatalf("Error loading TLS certificate and key: %v", err)
-			}
-			tlsCfg.Certificates = []tls.Certificate{certs}
-		} else {
-			log.Println("Warning: TLS certificate and key not provided. Server will run in insecure mode.")
+	} else if tlsCert != "" && tlsKey != "" {
+		certs, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+		if err != nil {
+			log.Fatalf("Error loading TLS certificate and key: %v", err)
 		}
+		tlsCfg = &tls.Config{
+			Certificates: []tls.Certificate{certs},
+		}
+	} else {
+		log.Println("Warning: No TLS configuration provided. Server will run in insecure mode.")
+		tlsCfg = &tls.Config{}
 	}
 
 	lnH12, lnH3, err := listen()
