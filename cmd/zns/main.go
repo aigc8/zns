@@ -37,7 +37,7 @@ var root string
 func listen() (lnH12 net.Listener, lnH3 net.PacketConn, err error) {
 	if os.Getenv("LISTEN_PID") == strconv.Itoa(os.Getpid()) {
 		if os.Getenv("LISTEN_FDS") != "2" {
-			panic("LISTEN_FDS should be 2")
+			return nil, nil, fmt.Errorf("LISTEN_FDS should be 2")
 		}
 		names := strings.Split(os.Getenv("LISTEN_FDNAMES"), ":")
 		for i, name := range names {
@@ -49,16 +49,22 @@ func listen() (lnH12 net.Listener, lnH3 net.PacketConn, err error) {
 				f := os.NewFile(uintptr(i+3), "quic port")
 				lnH3, err = net.FilePacketConn(f)
 			}
+			if err != nil {
+				return nil, nil, fmt.Errorf("error creating listener: %v", err)
+			}
 		}
 	} else {
 		if h12 != "" {
 			lnH12, err = net.Listen("tcp", h12)
 			if err != nil {
-				return
+				return nil, nil, fmt.Errorf("error listening on TCP: %v", err)
 			}
 		}
 		if h3 != "" {
 			lnH3, err = net.ListenPacket("udp", h3)
+			if err != nil {
+				return nil, nil, fmt.Errorf("error listening on UDP: %v", err)
+			}
 		}
 	}
 	return
@@ -133,22 +139,30 @@ If not free, you should set the following environment variables:
 		}
 	} else {
 		tlsCfg = &tls.Config{}
-		certs, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
-		if err != nil {
-			panic(err)
+		if tlsCert != "" && tlsKey != "" {
+			certs, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+			if err != nil {
+				log.Fatalf("Error loading TLS certificate and key: %v", err)
+			}
+			tlsCfg.Certificates = []tls.Certificate{certs}
+		} else {
+			log.Println("Warning: TLS certificate and key not provided. Server will run in insecure mode.")
 		}
-		tlsCfg.Certificates = []tls.Certificate{certs}
 	}
 
 	lnH12, lnH3, err := listen()
 	if err != nil {
-		panic(err)
+		log.Fatalf("Error setting up listeners: %v", err)
+	}
+
+	if lnH12 == nil && lnH3 == nil {
+		log.Fatal("No valid listeners were created. Check your h12 and h3 settings.")
 	}
 
 	var pay zns.Pay
 	var repo zns.TicketRepo
 	if free {
-		repo = zns.FreeTicketRepo{} // 修正拼写错误
+		repo = zns.FreeTicketRepo{}
 	} else {
 		repo = zns.NewTicketRepo(dbPath)
 		if repo == nil {
@@ -179,12 +193,22 @@ If not free, you should set the following environment variables:
 		th.AltSvc = h.AltSvc
 
 		h3 := http3.Server{Handler: mux, TLSConfig: tlsCfg}
-		go h3.Serve(lnH3)
+		go func() {
+			if err := h3.Serve(lnH3); err != nil {
+				log.Printf("Error serving HTTP/3: %v", err)
+			}
+		}()
 	}
 
-	lnTLS := tls.NewListener(lnH12, tlsCfg)
-	if err = http.Serve(lnTLS, mux); err != nil {
-		log.Fatal(err)
+	if lnH12 != nil {
+		lnTLS := tls.NewListener(lnH12, tlsCfg)
+		log.Println("Starting server...")
+		if err = http.Serve(lnTLS, mux); err != nil {
+			log.Fatalf("Error serving HTTP/1.1 and HTTP/2: %v", err)
+		}
+	} else {
+		log.Println("HTTP/1.1 and HTTP/2 listener not available. Only serving HTTP/3 if available.")
+		select {} // Keep the program running for HTTP/3
 	}
 }
 
