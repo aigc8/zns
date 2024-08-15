@@ -1,7 +1,13 @@
 package main
 
 import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"log"
@@ -9,14 +15,17 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 
-	"github.com/go-acme/lego/v4/challenge/dns01"
-	"github.com/go-acme/lego/v4/providers/dns/cloudflare"
+	"github.com/caddyserver/certmagic"
+	"github.com/libdns/cloudflare"
+	"github.com/mholt/acmez/v2"
+	"github.com/mholt/acmez/v2/acme"
+	"github.com/pkg/errors"
 	"github.com/quic-go/quic-go/http3"
-	"golang.org/x/crypto/acme/autocert"
+	"go.uber.org/atomic"
+	"go.uber.org/zap"
 
 	"github.com/gptq/zns"
 )
@@ -26,15 +35,125 @@ const (
 	ListenPort = 30443
 )
 
-var tlsCert string
-var tlsKey string
-var tlsHosts string
-var h12, h3 string
-var upstream string
-var dbPath string
-var price int
-var free bool
-var root string
+var (
+	tlsCert     string
+	tlsKey      string
+	tlsHosts    string
+	h12, h3     string
+	upstream    string
+	dbPath      string
+	price       int
+	free        bool
+	root        string
+	ownerEmail  string
+	cfAPIToken  string
+	production  bool
+	logger      *zap.Logger
+)
+
+type Autocert struct {
+	domains            []string
+	ownerEmail         []string
+	cloudflareAPIToken string
+	privateKey         *ecdsa.PrivateKey
+	certs              []acme.Certificate
+	inProcess          *atomic.Bool
+	prod               bool
+}
+
+func NewAutocert(domains []string, ownerEmail string, cloudflareAPIToken string, prod bool) *Autocert {
+	return &Autocert{
+		domains:            domains,
+		ownerEmail:         []string{ownerEmail},
+		cloudflareAPIToken: cloudflareAPIToken,
+		inProcess:          atomic.NewBool(false),
+		prod:               prod,
+	}
+}
+
+func (a *Autocert) RequestCertificate(ctx context.Context) (err error) {
+	if !a.inProcess.CompareAndSwap(false, true) {
+		return
+	}
+	defer a.inProcess.Store(false)
+
+	logger.Info("Requesting certificate", zap.Strings("domains", a.domains))
+
+	solver := &certmagic.DNS01Solver{
+		DNSManager: certmagic.DNSManager{
+			DNSProvider: &cloudflare.Provider{
+				APIToken: a.cloudflareAPIToken,
+			},
+		},
+	}
+
+	caLocation := certmagic.LetsEncryptStagingCA
+	if a.prod {
+		caLocation = certmagic.LetsEncryptProductionCA
+	}
+
+	client := acmez.Client{
+		Client: &acme.Client{
+			Directory: caLocation,
+			Logger:    logger,
+		},
+		ChallengeSolvers: map[string]acmez.Solver{
+			acme.ChallengeTypeDNS01: solver,
+		},
+	}
+
+	var accountPrivateKey *ecdsa.PrivateKey
+	accountPrivateKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return errors.Wrap(err, "could not generate an account key")
+	}
+
+	account := acme.Account{
+		Contact:              a.ownerEmail,
+		TermsOfServiceAgreed: true,
+		PrivateKey:           accountPrivateKey,
+	}
+
+	var acc acme.Account
+	acc, err = client.NewAccount(ctx, account)
+	if err != nil {
+		return errors.Wrap(err, "could not create new account")
+	}
+
+	a.privateKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return errors.Wrap(err, "generating certificate key")
+	}
+
+	a.certs, err = client.ObtainCertificateForSANs(ctx, acc, a.privateKey, a.domains)
+	if err != nil {
+		return errors.Wrap(err, "could not obtain certificate")
+	}
+
+	logger.Info("Certificate obtained successfully")
+	return nil
+}
+
+func (a *Autocert) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	if len(a.certs) == 0 {
+		return nil, fmt.Errorf("no certificates available")
+	}
+
+	certPEM := a.certs[0].ChainPEM
+	keyPEM, err := x509.MarshalECPrivateKey(a.privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal private key: %v", err)
+	}
+
+	keyPEMBlock := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyPEM})
+
+	cert, err := tls.X509KeyPair(certPEM, keyPEMBlock)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load keypair: %v", err)
+	}
+
+	return &cert, nil
+}
 
 func listen() (lnH12 net.Listener, lnH3 net.PacketConn, err error) {
 	if os.Getenv("LISTEN_PID") == strconv.Itoa(os.Getpid()) {
@@ -73,6 +192,13 @@ func listen() (lnH12 net.Listener, lnH3 net.PacketConn, err error) {
 }
 
 func main() {
+	var err error
+	logger, err = zap.NewProduction()
+	if err != nil {
+		log.Fatalf("Failed to initialize logger: %v", err)
+	}
+	defer logger.Sync()
+
 	flag.StringVar(&tlsCert, "tls-cert", "", "File path of TLS certificate")
 	flag.StringVar(&tlsKey, "tls-key", "", "File path of TLS key")
 	flag.StringVar(&tlsHosts, "tls-hosts", "", "Host names for ACME, comma-separated")
@@ -82,104 +208,59 @@ func main() {
 	flag.StringVar(&dbPath, "db", "", "File path of Sqlite database")
 	flag.StringVar(&root, "root", ".", "Root path of static files")
 	flag.IntVar(&price, "price", 1024, "Traffic price MB/Yuan")
-	flag.BoolVar(&free, "free", false, `Whether allow free access.
-If not free, you should set the following environment variables:
-	- ALIPAY_APP_ID
-	- ALIPAY_PRIVATE_KEY
-	- ALIPAY_PUBLIC_KEY
-`)
+	flag.BoolVar(&free, "free", false, "Whether allow free access")
+	flag.StringVar(&ownerEmail, "email", "", "Email address for Let's Encrypt")
+	flag.StringVar(&cfAPIToken, "cf-token", "", "Cloudflare API Token")
+	flag.BoolVar(&production, "prod", false, "Use Let's Encrypt production server")
 
 	flag.Parse()
 
 	// 验证root路径
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
-		log.Fatalf("Invalid root path: %v", err)
+		logger.Fatal("Invalid root path", zap.Error(err))
 	}
 	if _, err := os.Stat(absRoot); os.IsNotExist(err) {
-		log.Fatalf("Root directory does not exist: %s", absRoot)
+		logger.Fatal("Root directory does not exist", zap.String("path", absRoot))
 	}
 	root = absRoot
 
 	var tlsCfg *tls.Config
 	if tlsHosts != "" {
-		cfAPIToken := os.Getenv("CF_API_TOKEN")
-		cfAPIEmail := os.Getenv("CF_API_EMAIL")
-
-		if cfAPIToken == "" || cfAPIEmail == "" {
-			log.Fatal("CF_API_TOKEN and CF_API_EMAIL environment variables are required for ACME DNS validation")
+		if ownerEmail == "" || cfAPIToken == "" {
+			logger.Fatal("Email and Cloudflare API Token are required for automatic certificate management")
 		}
 
-		config := cloudflare.NewDefaultConfig()
-		config.AuthToken = cfAPIToken
-		config.ZoneToken = cfAPIToken
-		provider, err := cloudflare.NewDNSProviderConfig(config)
-		if err != nil {
-			log.Fatalf("Error creating Cloudflare DNS provider: %v", err)
-		}
+		domains := strings.Split(tlsHosts, ",")
+		autocert := NewAutocert(domains, ownerEmail, cfAPIToken, production)
 
-		solver := &customDNSChallengeSolver{provider: provider}
-
-		// 确定缓存目录
-		cacheDir := ""
-		if runtime.GOOS == "windows" {
-			cacheDir = filepath.Join(os.Getenv("LOCALAPPDATA"), "zns-autocert")
-		} else {
-			cacheDir = filepath.Join(os.Getenv("HOME"), ".zns-autocert")
+		if err := autocert.RequestCertificate(context.Background()); err != nil {
+			logger.Fatal("Failed to request certificate", zap.Error(err))
 		}
-		if err := os.MkdirAll(cacheDir, 0700); err != nil {
-			log.Fatalf("Failed to create autocert cache directory: %v", err)
-		}
-
-		acm := &autocert.Manager{
-			Prompt:     autocert.AcceptTOS,
-			Cache:      autocert.DirCache(cacheDir),
-			HostPolicy: autocert.HostWhitelist(strings.Split(tlsHosts, ",")...),
-		}
-
-		acm.Client.DirectoryURL = "https://acme-v02.api.letsencrypt.org/directory"
-		acm.Client.UserAgent = "zns-acme-client/1.0"
 
 		tlsCfg = &tls.Config{
-			GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-				cert, err := acm.GetCertificate(hello)
-				if err != nil {
-					// 如果获取证书失败，使用DNS-01挑战
-					if ListenPort != 443 {
-						for _, host := range strings.Split(tlsHosts, ",") {
-							if err := solver.Present(host, "", ""); err != nil {
-								return nil, fmt.Errorf("DNS-01 challenge failed for %s: %v", host, err)
-							}
-							defer solver.CleanUp(host, "", "")
-						}
-						return acm.GetCertificate(hello)
-					}
-					// 如果监听端口是443，返回错误，不进行DNS-01挑战
-					return nil, err
-				}
-				return cert, nil
-			},
+			GetCertificate: autocert.GetCertificate,
 		}
 	} else if tlsCert != "" && tlsKey != "" {
 		certs, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
 		if err != nil {
-			log.Fatalf("Error loading TLS certificate and key: %v", err)
+			logger.Fatal("Error loading TLS certificate and key", zap.Error(err))
 		}
 		tlsCfg = &tls.Config{
 			Certificates: []tls.Certificate{certs},
 		}
 	} else {
-		log.Println("Warning: No TLS configuration provided. Server will run in insecure mode.")
+		logger.Warn("No TLS configuration provided. Server will run in insecure mode.")
 		tlsCfg = &tls.Config{}
 	}
 
 	lnH12, lnH3, err := listen()
 	if err != nil {
-		log.Fatalf("Error setting up listeners: %v", err)
+		logger.Fatal("Error setting up listeners", zap.Error(err))
 	}
 
 	if lnH12 == nil && lnH3 == nil {
-		log.Fatal("No valid listeners were created. Check your h12 and h3 settings.")
+		logger.Fatal("No valid listeners were created. Check your h12 and h3 settings.")
 	}
 
 	var pay zns.Pay
@@ -189,7 +270,7 @@ If not free, you should set the following environment variables:
 	} else {
 		repo = zns.NewTicketRepo(dbPath)
 		if repo == nil {
-			log.Fatal("Failed to create TicketRepo")
+			logger.Fatal("Failed to create TicketRepo")
 		}
 		pay = zns.NewPay(
 			os.Getenv("ALIPAY_APP_ID"),
@@ -197,7 +278,7 @@ If not free, you should set the following environment variables:
 			os.Getenv("ALIPAY_PUBLIC_KEY"),
 		)
 		if pay == nil {
-			log.Fatal("Failed to create Pay")
+			logger.Fatal("Failed to create Pay")
 		}
 	}
 
@@ -213,11 +294,11 @@ If not free, you should set the following environment variables:
 	if lnH3 != nil {
 		localAddr := lnH3.LocalAddr()
 		if localAddr == nil {
-			log.Println("Warning: Unable to get local address for HTTP/3 listener")
+			logger.Warn("Unable to get local address for HTTP/3 listener")
 		} else {
 			udpAddr, ok := localAddr.(*net.UDPAddr)
 			if !ok {
-				log.Printf("Warning: Unexpected address type for HTTP/3 listener: %T", localAddr)
+				logger.Warn("Unexpected address type for HTTP/3 listener", zap.String("type", fmt.Sprintf("%T", localAddr)))
 			} else {
 				h.AltSvc = fmt.Sprintf(`h3=":%d"`, udpAddr.Port)
 				th.AltSvc = h.AltSvc
@@ -227,35 +308,21 @@ If not free, you should set the following environment variables:
 		h3 := http3.Server{Handler: mux, TLSConfig: tlsCfg}
 		go func() {
 			if err := h3.Serve(lnH3); err != nil {
-				log.Printf("Error serving HTTP/3: %v", err)
+				logger.Error("Error serving HTTP/3", zap.Error(err))
 			}
 		}()
 	} else {
-		log.Println("HTTP/3 listener not available")
+		logger.Warn("HTTP/3 listener not available")
 	}
 
 	if lnH12 != nil {
 		lnTLS := tls.NewListener(lnH12, tlsCfg)
-		log.Println("Starting server...")
+		logger.Info("Starting server...")
 		if err = http.Serve(lnTLS, mux); err != nil {
-			log.Fatalf("Error serving HTTP/1.1 and HTTP/2: %v", err)
+			logger.Fatal("Error serving HTTP/1.1 and HTTP/2", zap.Error(err))
 		}
 	} else {
-		log.Println("HTTP/1.1 and HTTP/2 listener not available. Only serving HTTP/3 if available.")
+		logger.Warn("HTTP/1.1 and HTTP/2 listener not available. Only serving HTTP/3 if available.")
 		select {} // Keep the program running for HTTP/3
 	}
-}
-
-type customDNSChallengeSolver struct {
-	provider *cloudflare.DNSProvider
-}
-
-func (s *customDNSChallengeSolver) Present(domain, token, keyAuth string) error {
-	fqdn, value := dns01.GetRecord(domain, keyAuth)
-	return s.provider.Present(domain, fqdn, value)
-}
-
-func (s *customDNSChallengeSolver) CleanUp(domain, token, keyAuth string) error {
-	fqdn, _ := dns01.GetRecord(domain, keyAuth)
-	return s.provider.CleanUp(domain, fqdn, "")
 }
