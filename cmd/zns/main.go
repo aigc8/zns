@@ -11,9 +11,17 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-acme/lego/v4/challenge/dns01"
+	"github.com/go-acme/lego/v4/providers/dns/cloudflare"
 	"github.com/quic-go/quic-go/http3"
-	"github.com/taoso/zns"
 	"golang.org/x/crypto/acme/autocert"
+
+	"github.com/gptq/zns"
+)
+
+// 定义监听端口常量
+const (
+	ListenPort = 443
 )
 
 var tlsCert string
@@ -59,9 +67,9 @@ func listen() (lnH12 net.Listener, lnH3 net.PacketConn, err error) {
 func main() {
 	flag.StringVar(&tlsCert, "tls-cert", "", "File path of TLS certificate")
 	flag.StringVar(&tlsKey, "tls-key", "", "File path of TLS key")
-	flag.StringVar(&tlsHosts, "tls-hosts", "", "Host name for ACME")
-	flag.StringVar(&h12, "h12", ":443", "Listen address for http1 and h2")
-	flag.StringVar(&h3, "h3", ":443", "Listen address for h3")
+	flag.StringVar(&tlsHosts, "tls-hosts", "", "Host names for ACME, comma-separated")
+	flag.StringVar(&h12, "h12", fmt.Sprintf(":%d", ListenPort), "Listen address for http1 and h2")
+	flag.StringVar(&h3, "h3", fmt.Sprintf(":%d", ListenPort), "Listen address for h3")
 	flag.StringVar(&upstream, "upstream", "https://doh.pub/dns-query", "DoH upstream URL")
 	flag.StringVar(&dbPath, "db", "", "File path of Sqlite database")
 	flag.StringVar(&root, "root", ".", "Root path of static files")
@@ -77,13 +85,52 @@ If not free, you should set the following environment variables:
 
 	var tlsCfg *tls.Config
 	if tlsHosts != "" {
-		acm := autocert.Manager{
+		cfAPIToken := os.Getenv("CF_API_TOKEN")
+		cfAPIEmail := os.Getenv("CF_API_EMAIL")
+
+		if cfAPIToken == "" || cfAPIEmail == "" {
+			log.Fatal("CF_API_TOKEN and CF_API_EMAIL environment variables are required for ACME DNS validation")
+		}
+
+		config := cloudflare.NewDefaultConfig()
+		config.AuthToken = cfAPIToken
+		config.ZoneToken = cfAPIToken
+		provider, err := cloudflare.NewDNSProviderConfig(config)
+		if err != nil {
+			log.Fatalf("Error creating Cloudflare DNS provider: %v", err)
+		}
+
+		solver := &customDNSChallengeSolver{provider: provider}
+
+		acm := &autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
 			Cache:      autocert.DirCache(os.Getenv("HOME") + "/.autocert"),
 			HostPolicy: autocert.HostWhitelist(strings.Split(tlsHosts, ",")...),
 		}
 
-		tlsCfg = acm.TLSConfig()
+		acm.Client.DirectoryURL = "https://acme-v02.api.letsencrypt.org/directory"
+		acm.Client.UserAgent = "zns-acme-client/1.0"
+
+		tlsCfg = &tls.Config{
+			GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+				cert, err := acm.GetCertificate(hello)
+				if err != nil {
+					// 如果获取证书失败，使用DNS-01挑战
+					if ListenPort != 443 {
+						for _, host := range strings.Split(tlsHosts, ",") {
+							if err := solver.Present(host, "", ""); err != nil {
+								return nil, fmt.Errorf("DNS-01 challenge failed for %s: %v", host, err)
+							}
+							defer solver.CleanUp(host, "", "")
+						}
+						return acm.GetCertificate(hello)
+					}
+					// 如果监听端口是443，返回错误，不进行DNS-01挑战
+					return nil, err
+				}
+				return cert, nil
+			},
+		}
 	} else {
 		tlsCfg = &tls.Config{}
 		certs, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
@@ -133,4 +180,18 @@ If not free, you should set the following environment variables:
 	if err = http.Serve(lnTLS, mux); err != nil {
 		log.Fatal(err)
 	}
+}
+
+type customDNSChallengeSolver struct {
+	provider *cloudflare.DNSProvider
+}
+
+func (s *customDNSChallengeSolver) Present(domain, token, keyAuth string) error {
+	fqdn, value := dns01.GetRecord(domain, keyAuth)
+	return s.provider.Present(domain, fqdn, value)
+}
+
+func (s *customDNSChallengeSolver) CleanUp(domain, token, keyAuth string) error {
+	fqdn, _ := dns01.GetRecord(domain, keyAuth)
+	return s.provider.CleanUp(domain, fqdn, "")
 }
