@@ -83,13 +83,13 @@ func increaseUDPBufferSize(conn net.PacketConn) error {
 func main() {
 	flag.StringVar(&tlsCert, "tls-cert", "", "File path of TLS certificate")
 	flag.StringVar(&tlsKey, "tls-key", "", "File path of TLS key")
-	flag.StringVar(&h12, "h12", "443", "Listen port for http1 and h2")
-	flag.StringVar(&h3, "h3", "443", "Listen port for h3")
+	flag.StringVar(&h12, "h12", "37443", "Listen port for http1 and h2")
+	flag.StringVar(&h3, "h3", "37443", "Listen port for h3")
 	flag.StringVar(&upstream, "upstream", "https://doh.pub/dns-query", "DoH upstream URL")
 	flag.StringVar(&dbPath, "db", "", "File path of Sqlite database")
 	flag.StringVar(&root, "root", ".", "Root path of static files")
 	flag.IntVar(&price, "price", 1024, "Traffic price MB/Yuan")
-	flag.BoolVar(&free, "free", false, `Whether allow free access.
+	flag.BoolVar(&free, "free", true, `Whether allow free access.
 If not free, you should set the following environment variables:
 	- ALIPAY_APP_ID
 	- ALIPAY_PRIVATE_KEY

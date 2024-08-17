@@ -1,0 +1,15 @@
+services:
+  zns:
+    image: zns-server
+    container_name: zns
+    ports:
+      - "37443:37443"
+      - "37443:37443/udp"
+    volumes:
+      - ./certs:/app/certs
+      - ./web:/app/web
+    environment:
+      - ZNS_UPSTREAM
+      - ZNS_DB
+      - ZNS_PRICE
+      - ZNS_FREE
