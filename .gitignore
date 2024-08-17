@@ -1,1 +1,5 @@
 cmd/zns/zns
+certs/
+*.crt
+*.key
+*.pem

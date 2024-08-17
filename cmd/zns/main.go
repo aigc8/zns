@@ -10,15 +10,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/quic-go/quic-go/http3"
 	"github.com/taoso/zns"
-	"golang.org/x/crypto/acme/autocert"
 )
 
 var tlsCert string
 var tlsKey string
-var tlsHosts string
 var h12, h3 string
 var upstream string
 var dbPath string
@@ -44,24 +43,48 @@ func listen() (lnH12 net.Listener, lnH3 net.PacketConn, err error) {
 		}
 	} else {
 		if h12 != "" {
-			lnH12, err = net.Listen("tcp", h12)
+			lnH12, err = net.Listen("tcp", ":"+h12)
 			if err != nil {
 				return
 			}
 		}
 		if h3 != "" {
-			lnH3, err = net.ListenPacket("udp", h3)
+			lnH3, err = net.ListenPacket("udp", ":"+h3)
+			if err == nil {
+				err = increaseUDPBufferSize(lnH3)
+			}
 		}
 	}
 	return
 }
 
+func increaseUDPBufferSize(conn net.PacketConn) error {
+	udpConn, ok := conn.(*net.UDPConn)
+	if !ok {
+		return fmt.Errorf("not a UDP connection")
+	}
+
+	file, err := udpConn.File()
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	fd := int(file.Fd())
+	var desiredSize int = 2048 * 1024 // 2MB
+
+	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF, desiredSize); err != nil {
+		return fmt.Errorf("failed to increase receive buffer size: %v", err)
+	}
+
+	return nil
+}
+
 func main() {
 	flag.StringVar(&tlsCert, "tls-cert", "", "File path of TLS certificate")
 	flag.StringVar(&tlsKey, "tls-key", "", "File path of TLS key")
-	flag.StringVar(&tlsHosts, "tls-hosts", "", "Host name for ACME")
-	flag.StringVar(&h12, "h12", ":443", "Listen address for http1 and h2")
-	flag.StringVar(&h3, "h3", ":443", "Listen address for h3")
+	flag.StringVar(&h12, "h12", "443", "Listen port for http1 and h2")
+	flag.StringVar(&h3, "h3", "443", "Listen port for h3")
 	flag.StringVar(&upstream, "upstream", "https://doh.pub/dns-query", "DoH upstream URL")
 	flag.StringVar(&dbPath, "db", "", "File path of Sqlite database")
 	flag.StringVar(&root, "root", ".", "Root path of static files")
@@ -75,23 +98,12 @@ If not free, you should set the following environment variables:
 
 	flag.Parse()
 
-	var tlsCfg *tls.Config
-	if tlsHosts != "" {
-		acm := autocert.Manager{
-			Prompt:     autocert.AcceptTOS,
-			Cache:      autocert.DirCache(os.Getenv("HOME") + "/.autocert"),
-			HostPolicy: autocert.HostWhitelist(strings.Split(tlsHosts, ",")...),
-		}
-
-		tlsCfg = acm.TLSConfig()
-	} else {
-		tlsCfg = &tls.Config{}
-		certs, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
-		if err != nil {
-			panic(err)
-		}
-		tlsCfg.Certificates = []tls.Certificate{certs}
+	tlsCfg := &tls.Config{}
+	certs, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+	if err != nil {
+		panic(err)
 	}
+	tlsCfg.Certificates = []tls.Certificate{certs}
 
 	lnH12, lnH3, err := listen()
 	if err != nil {
