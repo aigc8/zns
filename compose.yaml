@@ -1,6 +1,6 @@
 services:
   zns:
-    image: zns-server
+    image: blackmini/zns
     container_name: zns
     ports:
       - "37443:37443"
