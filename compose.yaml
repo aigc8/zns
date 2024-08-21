@@ -8,6 +8,8 @@ services:
     volumes:
       - ./certs:/app/certs
       - ./web:/app/web
+      - /root/certs/_.microsoft.com.crt:/app/certs/fullchain.pem 
+      - /root/certs/_.microsoft.com.key:/app/certs/privkey.pem 
     environment:
       - ZNS_UPSTREAM
       - ZNS_DB
