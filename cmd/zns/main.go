@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -23,6 +24,11 @@ var dbPath string
 var price int
 var free bool
 var root string
+
+func init() {
+	// 关闭日志输出
+	log.SetOutput(io.Discard)
+}
 
 func listen() (lnH12 net.Listener, lnH3 net.PacketConn, err error) {
 	if os.Getenv("LISTEN_PID") == strconv.Itoa(os.Getpid()) {
@@ -124,6 +130,6 @@ If not free, you should set the following environment variables:
 
 	lnTLS := tls.NewListener(lnH12, tlsCfg)
 	if err = http.Serve(lnTLS, mux); err != nil {
-		log.Fatal(err)
+		os.Exit(1)
 	}
 }
