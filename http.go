@@ -10,6 +10,10 @@ import (
 	"github.com/miekg/dns"
 )
 
+const (
+	fixedECSIP = "218.85.157.99"
+)
+
 type Handler struct {
 	Upstream string
 	Repo     TicketRepo
@@ -21,7 +25,7 @@ func createECS(ip net.IP) *dns.EDNS0_SUBNET {
 	sourceNetmask := uint8(24)
 	if ip.To4() == nil {
 		family = 2
-		sourceNetmask = 48
+		sourceNetmask = 64
 	}
 	return &dns.EDNS0_SUBNET{
 		Code:          dns.EDNS0SUBNET,
@@ -71,18 +75,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 默认使用IPv4固定IP
-	fixedIP := net.ParseIP("218.85.157.99")
-
-	// 尝试获取客户端IP，只用于判断是否为IPv6
-	clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		ip := net.ParseIP(clientIP)
-		if ip != nil && ip.To4() == nil {
-			// 如果客户端是IPv6，则使用IPv6固定IP
-			fixedIP = net.ParseIP("240e:14:6000::1")
-		}
-	}
+	// 使用固定IP
+	fixedIP := net.ParseIP(fixedECSIP)
 
 	// 强制替换或添加ECS选项
 	opt := m.IsEdns0()
