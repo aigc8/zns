@@ -11,13 +11,14 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     steps:
-      - name: 输出调试信息
-        run: |
-          echo "Docker Hub用户名: ${{ secrets.DOCKERHUB_USERNAME }}"
-          echo "GitHub SHA: ${{ github.sha }}"
-      
       - name: 检出代码
         uses: actions/checkout@v3
+
+      - name: 输出调试信息
+        run: |
+          echo "GitHub SHA: ${{ github.sha }}"
+          echo "DOCKERHUB_USERNAME 是否设置: ${{ secrets.DOCKERHUB_USERNAME != '' }}"
+          echo "DOCKERHUB_TOKEN 是否设置: ${{ secrets.DOCKERHUB_TOKEN != '' }}"
 
       - name: 设置QEMU
         uses: docker/setup-qemu-action@v2
@@ -29,7 +30,7 @@ jobs:
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: 构建并推送Docker镜像
         uses: docker/build-push-action@v4
@@ -39,5 +40,3 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/zns:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/zns:${{ github.sha }}
-
-      
