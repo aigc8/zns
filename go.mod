@@ -1,4 +1,4 @@
-module github.com/taoso/zns
+module github.com/aigc8/zns
 
 go 1.22.2
 

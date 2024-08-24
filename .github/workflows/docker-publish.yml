@@ -14,11 +14,18 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v3
 
+      - name: 设置Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+
       - name: 输出调试信息
         run: |
           echo "GitHub SHA: ${{ github.sha }}"
           echo "DOCKERHUB_USERNAME 是否设置: ${{ secrets.DOCKERHUB_USERNAME != '' }}"
           echo "DOCKERHUB_TOKEN 是否设置: ${{ secrets.DOCKERHUB_TOKEN != '' }}"
+          go version
+          go env
 
       - name: 设置QEMU
         uses: docker/setup-qemu-action@v2
