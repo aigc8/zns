@@ -53,4 +53,4 @@ EXPOSE 37443
 ENTRYPOINT ["./zns"]
 
 # 设置默认命令参数
-CMD ["-tls-cert", "/app/certs/fullchain.pem", "-tls-key", "/app/certs/privkey.pem", "-root", "/app/web"]
+CMD ["-free","-tls-cert", "/app/certs/fullchain.pem", "-tls-key", "/app/certs/privkey.pem", "-root", "/app/web"]
