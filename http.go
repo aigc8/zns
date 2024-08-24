@@ -3,7 +3,6 @@ package zns
 import (
 	"bytes"
 	"encoding/base64"
-	"fmt"
 	"io"
 	"log"
 	"net"
