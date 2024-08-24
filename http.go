@@ -3,8 +3,8 @@ package zns
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 
@@ -78,23 +78,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 使用固定IP
 	fixedIP := net.ParseIP(fixedECSIP)
-	log.Printf("使用固定IP: %s", fixedIP)
+	fmt.Printf("使用固定IP: %s\n", fixedIP)
 
 	// 强制替换或添加ECS选项
 	opt := m.IsEdns0()
 	if opt == nil {
 		opt = &dns.OPT{Hdr: dns.RR_Header{Name: ".", Rrtype: dns.TypeOPT}}
 		m.Extra = append(m.Extra, opt)
-		log.Println("添加新的OPT记录")
+		fmt.Println("添加新的OPT记录")
 	} else {
-		log.Println("已存在OPT记录")
+		fmt.Println("已存在OPT记录")
 	}
 
 	// 移除现有的ECS选项
 	for i, o := range opt.Option {
 		if o.Option() == dns.EDNS0SUBNET {
 			opt.Option = append(opt.Option[:i], opt.Option[i+1:]...)
-			log.Println("移除现有ECS选项")
+			fmt.Println("移除现有ECS选项")
 			break
 		}
 	}
@@ -102,14 +102,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 添加新的ECS选项
 	newECS := createECS(fixedIP)
 	opt.Option = append(opt.Option, newECS)
-	log.Printf("添加新的ECS选项: %+v", newECS)
+	fmt.Printf("添加新的ECS选项: %+v\n", newECS)
 
 	if question, err = m.Pack(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("发送到上游服务器的DNS消息: %+v", m)
+	fmt.Printf("发送到上游服务器的DNS消息: %+v\n", m)
 
 	resp, err := http.Post(h.Upstream, "application/dns-message", bytes.NewReader(question))
 	if err != nil {
@@ -124,7 +124,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("从上游服务器收到的响应长度: %d", len(answer))
+	fmt.Printf("从上游服务器收到的响应长度: %d\n", len(answer))
 
 	if err = h.Repo.Cost(token, len(question)+len(answer)); err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
