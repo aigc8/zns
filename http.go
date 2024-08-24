@@ -71,39 +71,36 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var hasSubnet bool
-	if e := m.IsEdns0(); e != nil {
-		for _, o := range e.Option {
-			if o.Option() == dns.EDNS0SUBNET {
-				a := o.(*dns.EDNS0_SUBNET).Address[:2]
-				// skip empty subnet like 0.0.0.0/0
-				if !bytes.HasPrefix(a, []byte{0, 0}) {
-					hasSubnet = true
-				}
-				break
-			}
+	// 默认使用IPv4固定IP
+	fixedIP := net.ParseIP("218.85.157.99")
+
+	// 尝试获取客户端IP，只用于判断是否为IPv6
+	clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		ip := net.ParseIP(clientIP)
+		if ip != nil && ip.To4() == nil {
+			// 如果客户端是IPv6，则使用IPv6固定IP
+			fixedIP = net.ParseIP("240e:14:6000::1")
 		}
 	}
 
-	if !hasSubnet {
-		opt := &dns.OPT{Hdr: dns.RR_Header{Name: ".", Rrtype: dns.TypeOPT}}
-		
-		// 默认使用IPv4固定IP
-		fixedIP := net.ParseIP("218.85.157.99")
-
-		// 尝试获取客户端IP
-		clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err == nil {
-			ip := net.ParseIP(clientIP)
-			if ip != nil && ip.To4() == nil {
-				// 如果客户端是IPv6，则使用IPv6固定IP
-				fixedIP = net.ParseIP("240e:14:6000::1")
-			}
-		}
-
-		opt.Option = append(opt.Option, createECS(fixedIP))
-		m.Extra = []dns.RR{opt}
+	// 强制替换或添加ECS选项
+	opt := m.IsEdns0()
+	if opt == nil {
+		opt = &dns.OPT{Hdr: dns.RR_Header{Name: ".", Rrtype: dns.TypeOPT}}
+		m.Extra = append(m.Extra, opt)
 	}
+
+	// 移除现有的ECS选项
+	for i, o := range opt.Option {
+		if o.Option() == dns.EDNS0SUBNET {
+			opt.Option = append(opt.Option[:i], opt.Option[i+1:]...)
+			break
+		}
+	}
+
+	// 添加新的ECS选项
+	opt.Option = append(opt.Option, createECS(fixedIP))
 
 	if question, err = m.Pack(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
