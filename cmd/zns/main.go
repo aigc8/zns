@@ -12,8 +12,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/aigc8/zns"
 	"github.com/quic-go/quic-go/http3"
-	"github.com/taoso/zns"
 )
 
 var tlsCert string
