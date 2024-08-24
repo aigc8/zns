@@ -36,7 +36,11 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: .
+          file: ./Dockerfile
           push: true
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/zns:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/zns:${{ github.sha }}
+
+      - name: 输出构建结果
+        run: echo "Docker镜像构建并推送完成"
