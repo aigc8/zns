@@ -2,9 +2,9 @@ name: Docker构建和发布
 
 on:
   push:
-    branches: [ "no-ecs" ]
+    branches: [ "master" ]
   pull_request:
-    branches: [ "no-ecs" ]
+    branches: [ "master" ]
   workflow_dispatch:
 
 jobs:
