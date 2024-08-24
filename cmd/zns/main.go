@@ -10,7 +10,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/aigc8/zns"
 	"github.com/quic-go/quic-go/http3"
@@ -50,30 +49,12 @@ func listen() (lnH12 net.Listener, lnH3 net.PacketConn, err error) {
 		}
 		if h3 != "" {
 			lnH3, err = net.ListenPacket("udp", ":"+h3)
-			if err == nil {
-				err = increaseUDPBufferSize(lnH3)
+			if err != nil {
+				return
 			}
 		}
 	}
 	return
-}
-
-func increaseUDPBufferSize(conn net.PacketConn) error {
-	udpConn, ok := conn.(*net.UDPConn)
-	if !ok {
-		return fmt.Errorf("not a UDP connection")
-	}
-
-	file, err := udpConn.File()
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	fd := file.Fd()
-	var desiredSize int = 2048 * 1024 // 2MB
-
-	return syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, desiredSize)
 }
 
 func main() {
