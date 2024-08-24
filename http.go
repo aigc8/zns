@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
 
 	"github.com/miekg/dns"
 )
@@ -15,6 +14,21 @@ type Handler struct {
 	Upstream string
 	Repo     TicketRepo
 	AltSvc   string
+}
+
+func createECS(ip net.IP) *dns.EDNS0_SUBNET {
+	family := uint16(1)
+	sourceNetmask := uint8(24)
+	if ip.To4() == nil {
+		family = 2
+		sourceNetmask = 48
+	}
+	return &dns.EDNS0_SUBNET{
+		Code:          dns.EDNS0SUBNET,
+		Family:        family,
+		SourceNetmask: sourceNetmask,
+		Address:       ip,
+	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -72,26 +86,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !hasSubnet {
-		ip, err := netip.ParseAddrPort(r.RemoteAddr)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		addr := ip.Addr()
 		opt := &dns.OPT{Hdr: dns.RR_Header{Name: ".", Rrtype: dns.TypeOPT}}
-		ecs := &dns.EDNS0_SUBNET{Code: dns.EDNS0SUBNET}
-		var bits int
-		if addr.Is4() {
-			bits = 24
-			ecs.Family = 1
-		} else {
-			bits = 48
-			ecs.Family = 2
+		
+		// 默认使用IPv4固定IP
+		fixedIP := net.ParseIP("218.85.157.99")
+
+		// 尝试获取客户端IP
+		clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err == nil {
+			ip := net.ParseIP(clientIP)
+			if ip != nil && ip.To4() == nil {
+				// 如果客户端是IPv6，则使用IPv6固定IP
+				fixedIP = net.ParseIP("240e:14:6000::1")
+			}
 		}
-		ecs.SourceNetmask = uint8(bits)
-		p := netip.PrefixFrom(addr, bits)
-		ecs.Address = net.IP(p.Masked().Addr().AsSlice())
-		opt.Option = append(opt.Option, ecs)
+
+		opt.Option = append(opt.Option, createECS(fixedIP))
 		m.Extra = []dns.RR{opt}
 	}
 
