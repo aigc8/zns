@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 env:
-  DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
-  DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+  DOCKER_HUB_USERNAME: ${{ secrets.ORG_DOCKER_HUB_USERNAME }}
+  DOCKER_HUB_PASSWORD: ${{ secrets.ORG_DOCKER_HUB_PASSWORD }}
 
 jobs:
   build-and-push:
