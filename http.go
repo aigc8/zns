@@ -27,6 +27,7 @@ type Handler struct {
 	Upstream string
 	Repo     TicketRepo
 	AltSvc   string
+	FreeMode bool
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -40,23 +41,29 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Alt-Svc", h.AltSvc)
 	}
 
-	token := r.URL.Query().Get("token")
-	if token == "" {
-		log.Println("无效的token")
-		http.Error(w, "invalid token", http.StatusUnauthorized)
-		return
-	}
+	var token string
+	var ts []Ticket
+	var err error
 
-	ts, err := h.Repo.List(token, 1)
-	if err != nil {
-		log.Printf("列出token时发生错误: %v", err)
-		http.Error(w, "invalid token", http.StatusInternalServerError)
-		return
-	}
-	if len(ts) == 0 || ts[0].Bytes <= 0 {
-		log.Println("无效的token或字节数不足")
-		http.Error(w, "invalid token", http.StatusUnauthorized)
-		return
+	if !h.FreeMode {
+		token = r.URL.Query().Get("token")
+		if token == "" {
+			log.Println("无效的token")
+			http.Error(w, "invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		ts, err = h.Repo.List(token, 1)
+		if err != nil {
+			log.Printf("列出token时发生错误: %v", err)
+			http.Error(w, "invalid token", http.StatusInternalServerError)
+			return
+		}
+		if len(ts) == 0 || ts[0].Bytes <= 0 {
+			log.Println("无效的token或字节数不足")
+			http.Error(w, "invalid token", http.StatusUnauthorized)
+			return
+		}
 	}
 
 	var question []byte
@@ -133,10 +140,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("从上游服务器收到的响应长度: %d", len(answer))
 
-	if err = h.Repo.Cost(token, len(question)+len(answer)); err != nil {
-		log.Printf("计算成本时发生错误: %v", err)
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
+	if !h.FreeMode {
+		if err = h.Repo.Cost(token, len(question)+len(answer)); err != nil {
+			log.Printf("计算成本时发生错误: %v", err)
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
 	}
 
 	w.Header().Add("content-type", "application/dns-message")

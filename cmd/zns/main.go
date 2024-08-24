@@ -100,7 +100,11 @@ If not free, you should set the following environment variables:
 		)
 	}
 
-	h := &zns.Handler{Upstream: upstream, Repo: repo}
+	h := &zns.Handler{
+		Upstream: upstream,
+		Repo:     repo,
+		FreeMode: free,
+	}
 	th := &zns.TicketHandler{MBpCNY: price, Pay: pay, Repo: repo}
 
 	mux := http.NewServeMux()
