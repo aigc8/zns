@@ -73,11 +73,7 @@ func increaseUDPBufferSize(conn net.PacketConn) error {
 	fd := file.Fd()
 	var desiredSize int = 2048 * 1024 // 2MB
 
-	if err := syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, desiredSize); err != nil {
-		return fmt.Errorf("failed to increase receive buffer size: %v", err)
-	}
-
-	return nil
+	return syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, desiredSize)
 }
 
 func main() {
