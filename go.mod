@@ -3,6 +3,7 @@ module github.com/aigc8/zns
 go 1.22.2
 
 require (
+	github.com/aigc8/zns v0.0.0-00010101000000-000000000000
 	github.com/go-kiss/sqlx v0.0.0-20230411140417-c05d9e94f400
 	github.com/miekg/dns v1.1.58
 	github.com/quic-go/quic-go v0.42.0
@@ -45,3 +46,5 @@ require (
 	modernc.org/strutil v1.2.0 // indirect
 	modernc.org/token v1.1.0 // indirect
 )
+
+replace github.com/aigc8/zns => github.com/aigc8/zns no-ecs
