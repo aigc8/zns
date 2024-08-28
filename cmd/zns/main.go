@@ -19,11 +19,14 @@ import (
 var tlsCert string
 var tlsKey string
 var h12, h3 string
-var upstream string
+var defaultUpstream string
+var chinaUpstream string
 var dbPath string
 var price int
 var free bool
 var root string
+var chinaDomainListPath string
+var publicSuffixListPath string
 
 func init() {
 	// 关闭日志输出
@@ -68,7 +71,8 @@ func main() {
 	flag.StringVar(&tlsKey, "tls-key", "", "File path of TLS key")
 	flag.StringVar(&h12, "h12", "37443", "Listen port for http1 and h2")
 	flag.StringVar(&h3, "h3", "37443", "Listen port for h3")
-	flag.StringVar(&upstream, "upstream", "https://doh.pub/dns-query", "DoH upstream URL")
+	flag.StringVar(&defaultUpstream, "default-upstream", "https://doh.pub/dns-query", "Default DoH upstream URL")
+	flag.StringVar(&chinaUpstream, "china-upstream", "https://doh.pub/dns-query", "China DoH upstream URL")
 	flag.StringVar(&dbPath, "db", "", "File path of Sqlite database")
 	flag.StringVar(&root, "root", ".", "Root path of static files")
 	flag.IntVar(&price, "price", 1024, "Traffic price MB/Yuan")
@@ -78,6 +82,8 @@ If not free, you should set the following environment variables:
 	- ALIPAY_PRIVATE_KEY
 	- ALIPAY_PUBLIC_KEY
 `)
+	flag.StringVar(&chinaDomainListPath, "china-domain-list", "", "Path to China domain list file")
+	flag.StringVar(&publicSuffixListPath, "public-suffix-list", "", "Path to public suffix list file")
 
 	flag.Parse()
 
@@ -106,10 +112,20 @@ If not free, you should set the following environment variables:
 		)
 	}
 
+	chinaDomainChecker := zns.NewChinaDomainChecker()
+	if err := chinaDomainChecker.LoadDomainList(chinaDomainListPath); err != nil {
+		log.Fatalf("Failed to load China domain list: %v", err)
+	}
+	if err := chinaDomainChecker.LoadSuffixList(publicSuffixListPath); err != nil {
+		log.Fatalf("Failed to load public suffix list: %v", err)
+	}
+
 	h := &zns.Handler{
-		Upstream: upstream,
-		Repo:     repo,
-		FreeMode: free,
+		DefaultUpstream:   defaultUpstream,
+		ChinaUpstream:     chinaUpstream,
+		Repo:              repo,
+		FreeMode:          free,
+		ChinaDomainChecker: chinaDomainChecker,
 	}
 	th := &zns.TicketHandler{MBpCNY: price, Pay: pay, Repo: repo}
 

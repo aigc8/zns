@@ -21,10 +21,12 @@ func init() {
 }
 
 type Handler struct {
-	Upstream string
-	Repo     TicketRepo
-	AltSvc   string
-	FreeMode bool
+	DefaultUpstream   string
+	ChinaUpstream     string
+	Repo              TicketRepo
+	AltSvc            string
+	FreeMode          bool
+	ChinaDomainChecker *ChinaDomainChecker
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +102,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := http.Post(h.Upstream, "application/dns-message", bytes.NewReader(question))
+	var upstream string
+	if len(m.Question) > 0 {
+		domain := m.Question[0].Name
+		if h.ChinaDomainChecker.IsChinaDomain(domain) {
+			upstream = h.ChinaUpstream
+		} else {
+			upstream = h.DefaultUpstream
+		}
+	} else {
+		upstream = h.DefaultUpstream
+	}
+
+	resp, err := http.Post(upstream, "application/dns-message", bytes.NewReader(question))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
